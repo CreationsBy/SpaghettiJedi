@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Endless Destiny (Qwen Mobile)</title>
+    <style>
+        /* --- CSS VARIABLES --- */
+        :root {
+            --bg-color: #1a1a2e;
+            --container-bg: #16213e;
+            --text-color: #e0e0e0;
+            --accent-color: #4db8ff;
+            --btn-bg: #e94560;
+            --btn-hover: #ff2e63;
+            --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            --border-radius: 15px;
+            --input-bg: #0f3460;
+        }
+
+        /* THEMES */
+        body.theme-fantasy { --bg-color: #2c241b; --container-bg: #f4e4bc; --text-color: #4a3b2a; --accent-color: #8b4513; --btn-bg: #800000; --btn-hover: #a52a2a; --font-main: 'Georgia', serif; --border-radius: 2px; --input-bg: #e8dcb5; }
+        body.theme-scifi { --bg-color: #000000; --container-bg: #0d0d0d; --text-color: #00ff41; --accent-color: #00ff41; --btn-bg: #003b00; --btn-hover: #008f11; --font-main: 'Courier New', Courier, monospace; --border-radius: 0px; --input-bg: #1a1a1a; }
+        body.theme-horror { --bg-color: #0a0a0a; --container-bg: #1a0505; --text-color: #d1d1d1; --accent-color: #ff0000; --btn-bg: #520000; --btn-hover: #7a0000; --font-main: 'Times New Roman', serif; --border-radius: 5px; --input-bg: #2b0e0e; }
+        body.theme-retro { --bg-color: #000084; --container-bg: #aaaaaa; --text-color: #000000; --accent-color: #000000; --btn-bg: #ffffff; --btn-hover: #cccccc; --font-main: 'Courier New', monospace; --border-radius: 0; --input-bg: #ffffff; }
+
+        /* BASE LAYOUT */
+        body { 
+            font-family: var(--font-main); 
+            background-color: var(--bg-color); 
+            color: var(--text-color); 
+            display: flex; 
+            justify-content: center; 
+            min-height: 100vh; 
+            margin: 0; 
+            padding: 20px; 
+            transition: background-color 0.5s ease;
+            -webkit-text-size-adjust: 100%; 
+        }
+
+        #game-container { 
+            width: 100%; 
+            max-width: 800px; 
+            background-color: var(--container-bg); 
+            padding: 30px; 
+            border-radius: var(--border-radius); 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); 
+            border: 2px solid var(--accent-color); 
+            position: relative; 
+            display: block;
+        }
+
+        h1 { text-align: center; color: var(--accent-color); margin-top: 0; }
+        
+        #story-display { background-color: var(--input-bg); padding: 20px; border-radius: 5px; margin-bottom: 20px; min-height: 150px; line-height: 1.6; white-space: pre-wrap; border-left: 4px solid var(--accent-color); }
+        .fade-in { animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .input-section { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+        
+        input[type="text"] { 
+            padding: 15px; 
+            border-radius: 5px; 
+            border: 1px solid var(--accent-color); 
+            background: var(--input-bg); 
+            color: var(--text-color); 
+            font-size: 16px; 
+            font-family: var(--font-main); 
+            outline: none; 
+        }
+        input[type="text"]::placeholder { color: var(--text-color); opacity: 0.5; }
+        
+        button { 
+            padding: 12px 20px; 
+            cursor: pointer; 
+            background-color: var(--btn-bg); 
+            border: 1px solid var(--accent-color); 
+            color: white; 
+            border-radius: 5px; 
+            font-size: 16px; 
+            font-family: var(--font-main); 
+            transition: background 0.3s; 
+            -webkit-tap-highlight-color: transparent; 
+        }
+        
+        /* THEME FIXES */
+        body.theme-fantasy button { color: #fff; }
+        body.theme-retro button { color: #000; } 
+        body.theme-retro .choice-btn { 
+            background-color: #000000 !important;
+            color: #ffffff !important;
+            border: 1px solid #ffffff !important; 
+        }
+
+        button:disabled { background-color: #555; cursor: not-allowed; }
+
+        /* LAYOUTS */
+        .row { display: flex; gap: 10px; }
+        #choices-container { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+        .choice-btn { background-color: var(--accent-color); color: var(--bg-color); text-align: left; font-weight: bold; }
+
+        /* DESKTOP HOVER */
+        @media (hover: hover) {
+            button:hover { background-color: var(--btn-hover); }
+            .choice-btn:hover { filter: brightness(1.2); }
+            body.theme-retro .choice-btn:hover {
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                border: 1px solid #000000 !important;
+                filter: none !important;
+            }
+        }
+
+        /* MOBILE OPTIMIZATION */
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            #game-container { padding: 20px 15px; }
+            .row { flex-direction: column; gap: 10px; }
+            button { width: 100%; padding: 16px; font-size: 1.1em; }
+            .choice-btn:active { filter: brightness(0.8); } 
+            .modal-content { width: 95%; padding: 20px; max-height: 85vh; overflow-y: scroll; }
+        }
+
+        #loading { text-align: center; display: none; color: var(--accent-color); font-style: italic; margin-top: 10px; }
+        .hidden { display: none !important; }
+        #init-progress { margin-top: 10px; color: #aaa; font-size: 0.9em; text-align: center; white-space: pre-wrap;}
+
+        #instructions-modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 999;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: var(--container-bg); padding: 30px; border-radius: 10px;
+            max-width: 500px; border: 2px solid var(--accent-color); text-align: center;
+        }
+        .modal-content h2 { color: var(--accent-color); margin-top: 0; }
+        .modal-content ul { text-align: left; margin-bottom: 20px; padding-left: 20px; }
+        .modal-content li { margin-bottom: 15px; line-height: 1.4; }
+
+        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 5px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; transform: translateX(-50%); font-size: 17px; border: 1px solid var(--accent-color); }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <h1 id="game-title">Endless Destiny</h1>
+    
+    <div id="start-screen" class="input-section">
+        <p>Enter any scenario (e.g., "I am a toaster," "I fight a dragon"):</p>
+        <input type="text" id="start-input" maxlength="500" placeholder="Your destiny begins here...">
+        
+        <div class="row" style="margin-top: 15px;">
+            <button id="start-btn" style="flex: 2; background-color: #4CAF50;">Begin Story</button>
+            <button id="load-btn" style="flex: 1; background-color: #2196F3;" class="hidden">Load Game</button>
+        </div>
+        <button id="howto-btn" style="background-color: #555; margin-top: 10px;">How to Play</button>
+        
+        <div id="init-progress"></div>
+    </div>
+
+    <div id="game-screen" class="hidden">
+        <div id="story-display"></div>
+        <div id="choices-container"></div>
+        
+        <div id="controls-section" class="input-section">
+            <p>Type your own action:</p>
+            <input type="text" id="custom-action-input" maxlength="300" placeholder="Do anything you want...">
+            <button id="custom-action-btn">Submit Action</button>
+            
+            <div class="row">
+                <button id="save-btn" style="background-color: #2196F3; flex: 1;">Save (Ctrl+S)</button>
+                <button id="end-game-btn" style="background-color: #555; flex: 1;">End Game</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading">AI is thinking...</div>
+</div>
+<div id="toast">Game Saved Successfully!</div>
+
+<div id="instructions-modal" class="hidden">
+    <div class="modal-content">
+        <h2>How to Play</h2>
+        <ul>
+            <li><strong>Start:</strong> Enter ANY scenario in the text box.</li>
+            <li><strong>AI Brain:</strong> Qwen 2.5 (1.5B) on Mobile, Llama 3.2 (3B) on Desktop.</li>
+            <li><strong>Play:</strong> The AI will write a story. You choose what happens next by clicking buttons.</li>
+            <li><strong>Freedom:</strong> Don't like the options? Type ANYTHING you want in the "Type your own action" box!</li>
+            <li id="save-instruction"><strong>Save:</strong> Click Save or press Ctrl+S to save your progress.</li>
+        </ul>
+        <button id="close-howto-btn">Got it!</button>
+    </div>
+</div>
+
+<script type="module">
+    import { CreateMLCEngine } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.72/+esm";
+
+    let engine = null;
+    let engineLoaded = false;
+
+    // --- SMART DEVICE DETECTION ---
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    // --- MODEL SELECTION ---
+    // Qwen2.5-1.5B is significantly smaller (1.6GB) than Llama 3B (2.4GB).
+    // This prevents the "Out of Memory" crash on iPhone while still being smart enough for JSON.
+    const selectedModelId = isMobile 
+        ? "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"  // Safe for Mobile
+        : "Llama-3.2-3B-Instruct-q4f16_1-MLC"; // Best for Desktop
+
+    // --- GAME STATE ---
+    let originalScenario = "";
+    let conversationHistory = []; 
+    let currentTheme = "modern"; 
+    let currentUIState = { story: "", options: [] }; 
+
+    window.addEventListener('DOMContentLoaded', () => {
+        if (isMobile) {
+            const t = document.getElementById('toast');
+            t.innerText = "Mobile: Using Optimized Qwen 1.5B Model.";
+            t.className = "show";
+            setTimeout(() => { t.className = t.className.replace("show", ""); }, 4000);
+        }
+
+        const startBtn = document.getElementById('start-btn');
+        const loadBtn = document.getElementById('load-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const endBtn = document.getElementById('end-game-btn');
+        const customBtn = document.getElementById('custom-action-btn');
+        const howtoBtn = document.getElementById('howto-btn');
+        const closeHowtoBtn = document.getElementById('close-howto-btn');
+        const modal = document.getElementById('instructions-modal');
+        const startInput = document.getElementById('start-input');
+        const customInput = document.getElementById('custom-action-input');
+
+        const isMac = navigator.userAgent.toLowerCase().includes('mac');
+        if (saveBtn) saveBtn.innerText = isMac ? "Save (Cmd+S)" : "Save (Ctrl+S)";
+        
+        if(startInput) {
+            startInput.addEventListener('keydown', (e) => {
+                if(e.key === 'Enter') { e.preventDefault(); startGame(); }
+            });
+        }
+        if(customInput) {
+            customInput.addEventListener('keydown', (e) => {
+                if(e.key === 'Enter') {
+                    e.preventDefault(); 
+                    const actionText = customInput.value.trim();
+                    if (!actionText) { alert("Please type an action!"); return; }
+                    handleCustomAction(actionText);
+                }
+            });
+        }
+
+        if(startBtn) startBtn.addEventListener('click', startGame);
+        if(loadBtn) loadBtn.addEventListener('click', loadGame);
+        if(saveBtn) saveBtn.addEventListener('click', saveGame);
+        if(endBtn) endBtn.addEventListener('click', endGame);
+        if(howtoBtn) howtoBtn.addEventListener('click', () => modal.classList.remove('hidden'));
+        if(closeHowtoBtn) closeHowtoBtn.addEventListener('click', () => modal.classList.add('hidden'));
+        if(customBtn) {
+            customBtn.addEventListener('click', () => {
+                const actionText = document.getElementById('custom-action-input').value.trim();
+                if (!actionText) { alert("Please type an action!"); return; }
+                handleCustomAction(actionText);
+            });
+        }
+
+        if (localStorage.getItem('geminiGameSave')) {
+            document.getElementById('load-btn').classList.remove('hidden');
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault(); 
+                if (!document.getElementById('game-screen').classList.contains('hidden')) saveGame();
+            }
+        });
+    });
+
+    // --- LOCAL AI ENGINE LOADER ---
+    async function initEngine() {
+        if (engineLoaded) return;
+        
+        const progressLabel = document.getElementById('init-progress');
+        // Qwen 1.5B is ~1.6GB download vs Llama 3B's ~2.4GB
+        progressLabel.innerText = isMobile 
+            ? "Initializing Qwen AI... (Download: ~1.6GB)" 
+            : "Initializing Llama AI... (Download: ~2.4GB)";
+        toggleLoading(true);
+
+        await new Promise(r => setTimeout(r, 50));
+
+        let chatOpts = {};
+        if (isMobile) {
+            // Extra safety limits for Qwen on iPhone
+            chatOpts = { 
+                context_window_size: 2048, 
+                prefill_chunk_size: 128 // Smaller chunks = safer load
+            };
+        }
+
+        try {
+            console.log("Loading model:", selectedModelId);
+
+            engine = await CreateMLCEngine(
+                selectedModelId,
+                { 
+                    initProgressCallback: (report) => {
+                        progressLabel.innerText = report.text;
+                    },
+                    logLevel: "INFO" 
+                },
+                chatOpts 
+            );
+            engineLoaded = true;
+            progressLabel.innerText = "AI Ready!";
+        } catch (err) {
+            console.error(err);
+            alert("Error loading AI: " + err.message);
+            toggleLoading(false);
+            throw err;
+        }
+    }
+
+    // --- ROBUST RESPONSE HANDLER ---
+    async function getLocalResponse(systemContext, userPrompt, attempt = 1) {
+        if (!engineLoaded) await initEngine();
+
+        let fullSystemPrompt = systemContext + 
+            `\n\nCRITICAL: Return valid JSON only. Format: {"story_text": "Your story...", "options": ["Option 1", "Option 2", "Option 3"]}.`;
+
+        if (isMobile) {
+            fullSystemPrompt += " Keep response concise.";
+        }
+
+        let messagesToSend = [];
+        
+        if (isMobile && conversationHistory.length > 2) {
+             let lastMsg = conversationHistory[conversationHistory.length - 1];
+             try {
+                const parsed = JSON.parse(lastMsg.content);
+                messagesToSend = [{ role: "user", content: `Context: ${parsed.story_text.substring(0, 300)}...\n\nAction: ${userPrompt}` }];
+             } catch(e) {
+                messagesToSend = [{ role: "user", content: userPrompt }];
+             }
+        } else {
+             messagesToSend = [...conversationHistory, { role: "user", content: userPrompt }];
+        }
+        
+        messagesToSend.unshift({ role: "system", content: fullSystemPrompt });
+
+        try {
+            const reply = await engine.chat.completions.create({
+                messages: messagesToSend,
+                temperature: 0.6, 
+                max_tokens: 1000, 
+                response_format: { type: "json_object" } 
+            });
+
+            let rawText = reply.choices[0].message.content;
+            console.log(`AI Output (Attempt ${attempt}):`, rawText);
+
+            let cleanText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+            
+            let jsonResponse = null;
+            try {
+                jsonResponse = JSON.parse(cleanText);
+            } catch (e) {
+                jsonResponse = { story_text: cleanText, options: [] };
+            }
+
+            // Cleanup artifacts
+            if (jsonResponse.story_text) {
+                jsonResponse.story_text = jsonResponse.story_text
+                    .replace(/^{"story_text":\s*"/i, "")
+                    .replace(/"}$/, "")
+                    .replace(/^"/, "")
+                    .replace(/"$/, "");
+            }
+
+            // Fallback options
+            if (!jsonResponse.options || jsonResponse.options.length === 0) {
+                console.log("No options generated. Using generic fallbacks.");
+                jsonResponse.options = ["Inspect surroundings", "Move forward", "Wait a moment"];
+            }
+
+            conversationHistory.push({ role: "user", content: userPrompt }); 
+            conversationHistory.push({ role: "assistant", content: JSON.stringify(jsonResponse) }); 
+            if (conversationHistory.length > 6) conversationHistory = conversationHistory.slice(-6);
+
+            return jsonResponse;
+
+        } catch (e) {
+            console.error("AI Error:", e);
+            if (attempt < 2) {
+                 return await getLocalResponse(systemContext, userPrompt, attempt + 1);
+            }
+            return { 
+                story_text: "The situation evolves, but the path forward is unclear...", 
+                options: ["Continue", "Look around", "Wait"] 
+            };
+        }
+    }
+
+    // --- GAME LOGIC ---
+
+    async function startGame() {
+        const input = document.getElementById('start-input').value.trim();
+        if (!input) { alert("Enter a scenario!"); return; }
+
+        originalScenario = input;
+        
+        await initEngine(); 
+        toggleLoading(true);
+
+        const system = `You are an interactive storyteller. Write an engaging opening paragraph based on the user's input. Choose a theme. Provide 3 options. Return JSON.`;
+        const prompt = `Start story: "${originalScenario}"`;
+        
+        const response = await getLocalResponse(system, prompt);
+        
+        if(response) {
+            applyTheme('modern');
+            updateUI(response);
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+        }
+        toggleLoading(false);
+    }
+
+    async function handleChoice(choiceText) {
+        toggleLoading(true);
+        const system = `You are a storyteller. The user made a choice. Describe the outcome and provide 3 new options. Return JSON.`;
+        const response = await getLocalResponse(system, `I choose to: ${choiceText}`);
+        if(response) updateUI(response);
+        toggleLoading(false);
+    }
+
+    async function handleCustomAction(actionText) {
+        toggleLoading(true);
+        document.getElementById('custom-action-input').value = ""; 
+        const system = `You are a storyteller. The user attempts an action. Describe the result and provide 3 new options. Return JSON.`;
+        const response = await getLocalResponse(system, `I attempt to: ${actionText}`);
+        if(response) updateUI(response);
+        toggleLoading(false);
+    }
+
+    async function endGame() {
+        toggleLoading(true);
+        const system = `Write a satisfying conclusion to the story. Return JSON.`;
+        const response = await getLocalResponse(system, "End game.");
+        if(response) {
+            document.getElementById('story-display').innerText = response.story_text;
+            const choicesContainer = document.getElementById('choices-container');
+            choicesContainer.innerHTML = "<h3>THE END</h3>";
+            const restartBtn = document.createElement('button');
+            restartBtn.innerText = "Start New Game";
+            restartBtn.className = "choice-btn"; 
+            restartBtn.style.backgroundColor = "#4CAF50"; 
+            restartBtn.onclick = () => window.location.reload();
+            choicesContainer.appendChild(restartBtn);
+            document.getElementById('controls-section').classList.add('hidden'); 
+            localStorage.removeItem('geminiGameSave');
+        }
+        toggleLoading(false);
+    }
+
+    // --- HELPERS ---
+
+    function updateUI(data) {
+        currentUIState.story = data.story_text;
+        currentUIState.options = data.options;
+
+        const disp = document.getElementById('story-display');
+        disp.innerText = data.story_text;
+        disp.classList.remove('fade-in');
+        void disp.offsetWidth; 
+        disp.classList.add('fade-in');
+
+        const cont = document.getElementById('choices-container');
+        cont.innerHTML = ""; 
+        if (data.options && data.options.length > 0) {
+            data.options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.innerText = opt;
+                btn.className = "choice-btn";
+                btn.onclick = () => handleChoice(opt);
+                cont.appendChild(btn);
+            });
+        }
+    }
+
+    function applyTheme(themeName) {
+        document.body.className = ""; 
+        const validThemes = ["fantasy", "scifi", "horror", "retro", "modern"];
+        document.body.classList.add(validThemes.includes(themeName) ? `theme-${themeName}` : 'theme-modern');
+    }
+
+    function saveGame() {
+        localStorage.setItem('geminiGameSave', JSON.stringify({
+            originalScenario, conversationHistory, currentTheme, currentUIState
+        }));
+        const t = document.getElementById('toast');
+        t.innerText = "Game Saved Successfully!"; 
+        t.className = "show";
+        setTimeout(() => { t.className = t.className.replace("show", ""); }, 3000);
+    }
+
+    function loadGame() {
+        const data = JSON.parse(localStorage.getItem('geminiGameSave'));
+        if(!data) return;
+        originalScenario = data.originalScenario;
+        conversationHistory = data.conversationHistory;
+        currentTheme = data.currentTheme;
+        currentUIState = data.currentUIState;
+        
+        applyTheme(currentTheme);
+        updateUI({ story_text: currentUIState.story, options: currentUIState.options });
+        document.getElementById('start-screen').classList.add('hidden');
+        document.getElementById('game-screen').classList.remove('hidden');
+    }
+
+    function toggleLoading(isLoading) {
+        document.getElementById('loading').style.display = isLoading ? 'block' : 'none';
+        document.querySelectorAll('button').forEach(b => b.disabled = isLoading);
+    }
+</script>
+
+</body>
+</html>
