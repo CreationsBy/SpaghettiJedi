@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AR Motion Games</title>
+    <style>
+        /* 1. Reset and Full Screen Setup */
+        html, body { 
+            margin: 0; 
+            padding: 0; 
+            width: 100%; 
+            height: 100%; 
+            height: 100dvh; /* Dynamic height for mobile browsers */
+            overflow: hidden; 
+            font-family: 'Arial', sans-serif; 
+            background: #000; 
+            color: white; 
+            -webkit-user-select: none; /* Prevent text selection on tap */
+            user-select: none;
+        }
+
+        #canvas-container { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            z-index: 1; 
+        }
+        
+        /* 2. UI Layer - Fixed to edges */
+        #ui-layer { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            height: 100dvh; 
+            z-index: 10; 
+            pointer-events: none; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box; /* Ensures padding doesn't add to width */
+        }
+        
+        /* 3. Panel Styling - Scrollable if too big */
+        .panel { 
+            background: rgba(0, 0, 0, 0.85); 
+            padding: 20px; 
+            border-radius: 20px; 
+            border: 2px solid #00d2ff; 
+            pointer-events: auto; 
+            width: 90%; 
+            max-width: 400px; /* Prevent it getting too wide on tablets */
+            max-height: 80vh; /* Never take up more than 80% of screen height */
+            overflow-y: auto; /* Scroll if content is too big */
+            transition: opacity 0.3s; 
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+            
+            /* Flex layout to stack buttons neatly */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .hidden { opacity: 0; pointer-events: none; display: none !important; }
+        
+        h1 { 
+            margin: 0 0 10px 0; 
+            color: #00d2ff; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            font-size: 1.8rem;
+        }
+        
+        p { 
+            margin: 0 0 15px 0; 
+            font-size: 1rem; 
+            line-height: 1.4; 
+            color: #ddd;
+        }
+        
+        /* Buttons - Better Touch Targets */
+        button { 
+            background: linear-gradient(135deg, #00d2ff, #0077be); 
+            color: white;
+            border: none; 
+            padding: 15px 0; /* Vertical padding */
+            width: 100%;     /* Full width buttons */
+            font-size: 1.1rem; 
+            font-weight: bold; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            transition: transform 0.1s; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        button:active { transform: scale(0.96); opacity: 0.9; }
+        button:disabled { background: #555; color: #888; transform: none; }
+
+        /* Secondary Button Style */
+        .btn-secondary {
+            background: #444;
+            margin-top: 5px;
+        }
+        
+        /* HUD & Camera Preview */
+        #hud { 
+            position: absolute; 
+            top: safe-area-inset-top; /* iOS Notch support */
+            top: 20px; 
+            left: 20px; 
+            z-index: 5; 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            text-shadow: 2px 2px 0 #000; 
+            display: none; 
+            pointer-events: none;
+        }
+        
+        #cam-preview { 
+            position: absolute; 
+            bottom: 20px; 
+            right: 20px; 
+            width: 100px; 
+            height: auto; 
+            border: 2px solid white; 
+            z-index: 5; 
+            transform: scaleX(-1); 
+            border-radius: 10px; 
+            display: none; 
+            pointer-events: none; /* Let clicks pass through */
+        }
+        
+        /* Loader */
+        #loader { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            z-index: 20; 
+            font-size: 1.2rem; 
+            text-align: center;
+            width: 80%;
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <video id="cam-preview" playsinline></video>
+
+    <div id="hud">Waiting...</div>
+    <div id="loader">Loading Vision Models...<br><span style="font-size:0.8em; color:#aaa">Please allow Camera access</span></div>
+
+    <div id="ui-layer">
+        
+        <div id="lobby-panel" class="panel hidden">
+            <h1>Motion Arcade</h1>
+            <p>Select a game mode:</p>
+            <button onclick="gameManager.selectGame('track')">🏃 Track Run</button>
+            <button onclick="gameManager.selectGame('swim')">🏊 Ocean Swim</button>
+            <button onclick="gameManager.selectGame('heads-up')">🤔 Heads Up</button>
+        </div>
+
+        <div id="calibration-panel" class="panel hidden">
+            <h1 id="game-title">Instructions</h1>
+            <p id="game-instructions">...</p>
+            <div style="width:100%; height:1px; background:#444; margin: 10px 0;"></div>
+            <h3 style="margin:5px 0; color:#00ff00;">📷 Calibration</h3>
+            <p style="font-size:0.9rem">Place device on stand & step back.</p>
+            
+            <div id="calib-status" style="color: red; font-weight: bold; background: #222; padding: 10px; border-radius: 8px; width: 100%; box-sizing: border-box;">
+                Body Not Detected
+            </div>
+            
+            <button id="start-btn" disabled onclick="gameManager.startGame()">START GAME</button>
+            <button class="btn-secondary" onclick="gameManager.toLobby()">Back to Lobby</button>
+        </div>
+
+        <div id="result-panel" class="panel hidden">
+            <h1>Game Over</h1>
+            <p id="result-text" style="font-size: 1.2rem; font-weight: bold; color: #ffeb3b;"></p>
+            <button onclick="gameManager.replay()">Play Again</button>
+            <button class="btn-secondary" onclick="gameManager.toLobby()">Return to Lobby</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const STATES = { LOADING: 0, LOBBY: 1, INSTRUCTION: 2, GAME: 3, RESULT: 4 };
+
+        class GameManager {
+            constructor() {
+                this.state = STATES.LOADING;
+                this.currentGame = null; 
+                this.score = 0;
+                this.isPlaying = false;
+                
+                // Track
+                this.trackSpeed = 0;
+                this.trackDistance = 0;
+                
+                // Swim
+                this.swimHeight = 0;
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+                
+                // Heads Up
+                this.currentWord = "Tiger";
+                this.words = ["Tiger", "Airplane", "Spaghetti", "Zombie", "Elvis", "Dinosaur", "Robot"];
+                
+                this.bodyVisible = false;
+            }
+
+            init() {
+                document.getElementById('loader').classList.add('hidden');
+                this.toLobby();
+            }
+
+            toLobby() {
+                this.state = STATES.LOBBY;
+                this.isPlaying = false;
+                ui.showPanel('lobby-panel');
+                sceneManager.setEnvironment('lobby');
+                sceneManager.camera.position.set(0, 1.6, 5);
+                document.getElementById('cam-preview').style.display = 'none';
+            }
+
+            selectGame(type) {
+                this.currentGame = type;
+                this.state = STATES.INSTRUCTION;
+                
+                // Show camera preview during calibration so user knows where to stand
+                document.getElementById('cam-preview').style.display = 'block';
+                
+                let title = "", instr = "";
+                
+                if(type === 'track') {
+                    title = "Track Runner";
+                    instr = "Pump your arms to run! Faster arms = Faster movement.";
+                    sceneManager.setEnvironment('track');
+                } else if (type === 'swim') {
+                    title = "Ocean Survival";
+                    instr = "Swim with your arms to stay afloat! Don't sink.";
+                    sceneManager.setEnvironment('swim');
+                } else if (type === 'heads-up') {
+                    title = "Heads Up";
+                    instr = "Guess the word on your head! (Simulated)";
+                    sceneManager.setEnvironment('heads-up');
+                }
+
+                document.getElementById('game-title').innerText = title;
+                document.getElementById('game-instructions').innerText = instr;
+                
+                // Reset calibration UI
+                document.getElementById('calib-status').innerText = "Step Back...";
+                document.getElementById('calib-status').style.color = "yellow";
+                document.getElementById('start-btn').disabled = true;
+                
+                ui.showPanel('calibration-panel');
+            }
+
+            updateCalibration(poseLandmarks) {
+                if(this.state !== STATES.INSTRUCTION) return;
+
+                const leftShoulder = poseLandmarks[11];
+                const rightShoulder = poseLandmarks[12];
+                const leftWrist = poseLandmarks[15];
+                const rightWrist = poseLandmarks[16];
+
+                const isVisible = (point) => point && point.visibility > 0.5;
+
+                // Requirement: Shoulders visible + at least one wrist
+                if (isVisible(leftShoulder) && isVisible(rightShoulder) && 
+                    (isVisible(leftWrist) || isVisible(rightWrist))) {
+                    
+                    this.bodyVisible = true;
+                    document.getElementById('calib-status').innerText = "✅ Ready! Press Start";
+                    document.getElementById('calib-status').style.color = "#00ff00";
+                    document.getElementById('start-btn').disabled = false;
+                } else {
+                    this.bodyVisible = false;
+                    document.getElementById('calib-status').innerText = "⚠️ Show Head & Arms";
+                    document.getElementById('calib-status').style.color = "red";
+                    document.getElementById('start-btn').disabled = true;
+                }
+            }
+
+            startGame() {
+                this.state = STATES.GAME;
+                this.isPlaying = true;
+                ui.hideAllPanels();
+                document.getElementById('hud').style.display = 'block';
+                // Hide small preview during game to save performance/distraction
+                document.getElementById('cam-preview').style.display = 'none'; 
+                
+                this.trackSpeed = 0;
+                this.trackDistance = 0;
+                this.swimHeight = 0;
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+                
+                // Random word for Heads Up
+                if(this.currentGame === 'heads-up') {
+                    this.currentWord = this.words[Math.floor(Math.random() * this.words.length)];
+                }
+                
+                if(this.currentGame === 'track') sceneManager.camera.position.set(0, 1.6, 5);
+                else if(this.currentGame === 'swim') sceneManager.camera.position.set(0, 2, 5);
+            }
+
+            endGame(msg) {
+                this.state = STATES.RESULT;
+                this.isPlaying = false;
+                document.getElementById('hud').style.display = 'none';
+                document.getElementById('result-text').innerText = msg;
+                ui.showPanel('result-panel');
+            }
+
+            replay() {
+                this.selectGame(this.currentGame);
+            }
+
+            update(landmarks) {
+                if(!this.isPlaying || !landmarks) return;
+
+                if(this.currentGame === 'track') {
+                    let movement = visionManager.getWristMovement();
+                    if (movement > 0.05) this.trackSpeed += 0.02;
+                    else this.trackSpeed *= 0.95;
+                    this.trackSpeed = Math.min(this.trackSpeed, 0.8);
+                    sceneManager.moveFloor(this.trackSpeed);
+                    this.trackDistance += this.trackSpeed;
+                    document.getElementById('hud').innerText = `Dist: ${Math.round(this.trackDistance)}m`;
+                } 
+                else if (this.currentGame === 'swim') {
+                    let movement = visionManager.getWristMovement();
+                    const GRAVITY = 0.02;
+                    const LIFT_FACTOR = 0.05;
+                    if (movement > 0.08) this.swimHeight += (movement * LIFT_FACTOR);
+                    this.swimHeight -= GRAVITY;
+                    if(this.swimHeight > 3) this.swimHeight = 3;
+                    if(this.swimHeight < -5) this.swimHeight = -5;
+
+                    sceneManager.camera.position.y = Math.max(this.swimHeight + 1.5, -4); 
+
+                    if (this.swimHeight < -0.2) {
+                        this.isUnderwater = true;
+                        this.swimOxygen -= (1/30);
+                        sceneManager.setUnderwaterEffect(true);
+                    } else {
+                        if(this.isUnderwater) {
+                            this.maxOxygenTime = Math.max(3, this.maxOxygenTime - 2);
+                            this.swimOxygen = this.maxOxygenTime;
+                        }
+                        this.isUnderwater = false;
+                        sceneManager.setUnderwaterEffect(false);
+                    }
+                    document.getElementById('hud').innerText = `Oxygen: ${this.swimOxygen.toFixed(1)}s`;
+                    if (this.swimOxygen <= 0) this.endGame("You Drowned!");
+                } 
+                else if (this.currentGame === 'heads-up') {
+                    sceneManager.updateHeadBand(landmarks);
+                    document.getElementById('hud').innerText = `Card: ???`;
+                }
+            }
+        }
+
+        class VisionManager {
+            constructor() {
+                this.videoElement = document.getElementById('cam-preview');
+                this.canvasElement = document.createElement('canvas'); 
+                this.ctx = this.canvasElement.getContext('2d');
+                this.userCanvas = document.createElement('canvas');
+                this.userCtx = this.userCanvas.getContext('2d');
+                this.userTexture = new THREE.CanvasTexture(this.userCanvas);
+                this.prevLeftWristY = 0;
+                this.prevRightWristY = 0;
+                this.motionEnergy = 0;
+            }
+
+            async init() {
+                const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+                pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    enableSegmentation: true, 
+                    smoothSegmentation: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+                pose.onResults(this.onResults.bind(this));
+
+                const camera = new Camera(this.videoElement, {
+                    onFrame: async () => { await pose.send({image: this.videoElement}); },
+                    width: 640,
+                    height: 480
+                });
+                
+                try {
+                    await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: "user" } });
+                } catch(e) {
+                    console.warn("Camera/Mic error", e);
+                }
+                camera.start();
+            }
+
+            onResults(results) {
+                if (!results.poseLandmarks) return;
+                this.userCanvas.width = results.image.width;
+                this.userCanvas.height = results.image.height;
+                this.userCtx.save();
+                this.userCtx.clearRect(0, 0, this.userCanvas.width, this.userCanvas.height);
+                this.userCtx.drawImage(results.segmentationMask, 0, 0, this.userCanvas.width, this.userCanvas.height);
+                this.userCtx.globalCompositeOperation = 'source-in';
+                this.userCtx.drawImage(results.image, 0, 0, this.userCanvas.width, this.userCanvas.height);
+                this.userCtx.restore();
+                this.userTexture.needsUpdate = true; 
+
+                const leftWrist = results.poseLandmarks[15];
+                const rightWrist = results.poseLandmarks[16];
+                if(leftWrist && rightWrist) {
+                    let dyL = Math.abs(leftWrist.y - this.prevLeftWristY);
+                    let dyR = Math.abs(rightWrist.y - this.prevRightWristY);
+                    this.motionEnergy = (dyL + dyR) * 10; 
+                    this.prevLeftWristY = leftWrist.y;
+                    this.prevRightWristY = rightWrist.y;
+                }
+
+                if(gameManager.state === STATES.INSTRUCTION) gameManager.updateCalibration(results.poseLandmarks);
+                if(gameManager.state === STATES.GAME) gameManager.update(results.poseLandmarks);
+            }
+
+            getWristMovement() { return this.motionEnergy; }
+        }
+
+        class SceneManager {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+                this.scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                dirLight.position.set(0, 10, 10);
+                this.scene.add(dirLight);
+
+                const geometry = new THREE.PlaneGeometry(4, 3); 
+                this.userMaterial = new THREE.MeshBasicMaterial({ map: visionManager.userTexture, transparent: true, side: THREE.DoubleSide });
+                this.userPlane = new THREE.Mesh(geometry, this.userMaterial);
+                this.userPlane.position.set(0, 1.5, -2); 
+                this.scene.add(this.userPlane);
+
+                this.floor = null; this.water = null; this.headBand = null;
+                this.initEnvironments();
+                this.animate();
+            }
+
+            initEnvironments() {
+                const floorGeo = new THREE.PlaneGeometry(10, 100);
+                const floorMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
+                this.floor = new THREE.Mesh(floorGeo, floorMat);
+                this.floor.rotation.x = -Math.PI / 2;
+                this.floor.position.set(0, 0, -40);
+                this.floor.visible = false;
+                this.scene.add(this.floor);
+
+                const waterGeo = new THREE.PlaneGeometry(100, 100);
+                const waterMat = new THREE.MeshBasicMaterial({ color: 0x0077be, transparent: true, opacity: 0.8 });
+                this.water = new THREE.Mesh(waterGeo, waterMat);
+                this.water.rotation.x = -Math.PI / 2;
+                this.water.visible = false;
+                this.scene.add(this.water);
+
+                const boxGeo = new THREE.BoxGeometry(0.8, 0.3, 0.1);
+                const boxMat = new THREE.MeshNormalMaterial(); 
+                this.headBand = new THREE.Mesh(boxGeo, boxMat);
+                this.headBand.visible = false;
+                this.scene.add(this.headBand);
+            }
+
+            setEnvironment(type) {
+                this.floor.visible = false;
+                this.water.visible = false;
+                this.headBand.visible = false;
+                this.scene.background = new THREE.Color(0x000000);
+                if (type === 'lobby') this.scene.background = new THREE.Color(0x220033);
+                else if (type === 'track') { this.scene.background = new THREE.Color(0x87CEEB); this.floor.visible = true; }
+                else if (type === 'swim') { this.scene.background = new THREE.Color(0x87CEEB); this.water.visible = true; }
+                else if (type === 'heads-up') { this.scene.background = new THREE.Color(0x333333); this.headBand.visible = true; }
+            }
+
+            moveFloor(speed) { if(!this.floor.visible) return; }
+            setUnderwaterEffect(isUnder) {
+                if(isUnder) { this.scene.fog = new THREE.Fog(0x001133, 0.1, 5); this.scene.background = new THREE.Color(0x001133); }
+                else { this.scene.fog = null; this.scene.background = new THREE.Color(0x87CEEB); }
+            }
+            updateHeadBand(landmarks) {
+                if(!this.headBand.visible) return;
+                const nose = landmarks[0];
+                if(nose) {
+                    const x = (0.5 - nose.x) * 4; 
+                    const y = (0.5 - nose.y) * 3 + 1.8; 
+                    this.headBand.position.set(x, y + 0.3, -2);
+                }
+            }
+            animate() {
+                requestAnimationFrame(this.animate.bind(this));
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        class UIManager {
+            constructor() { this.panels = document.querySelectorAll('.panel'); }
+            hideAllPanels() { this.panels.forEach(p => p.classList.add('hidden')); }
+            showPanel(id) {
+                this.hideAllPanels();
+                const p = document.getElementById(id);
+                p.classList.remove('hidden');
+                p.style.display = 'flex';
+            }
+        }
+
+        const visionManager = new VisionManager();
+        const sceneManager = new SceneManager();
+        const gameManager = new GameManager();
+        const ui = new UIManager();
+        window.gameManager = gameManager;
+
+        visionManager.init().then(() => { gameManager.init(); });
+        window.addEventListener('resize', () => {
+            sceneManager.camera.aspect = window.innerWidth / window.innerHeight;
+            sceneManager.camera.updateProjectionMatrix();
+            sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
