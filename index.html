@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Motion Games</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; background: #000; color: white; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* UI Overlays */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        
+        .panel { background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 15px; border: 2px solid #00d2ff; pointer-events: auto; max-width: 80%; transition: opacity 0.3s; }
+        .hidden { opacity: 0; pointer-events: none; }
+        
+        h1 { color: #00d2ff; text-transform: uppercase; letter-spacing: 2px; }
+        p { font-size: 1.1em; line-height: 1.5; }
+        
+        button { background: #00d2ff; border: none; padding: 15px 30px; font-size: 1.2em; font-weight: bold; border-radius: 50px; cursor: pointer; margin-top: 15px; transition: transform 0.2s; }
+        button:active { transform: scale(0.95); }
+        
+        #hud { position: absolute; top: 20px; left: 20px; z-index: 5; font-size: 1.5em; font-weight: bold; text-shadow: 2px 2px 0 #000; display: none; }
+        #cam-preview { position: absolute; bottom: 20px; right: 20px; width: 120px; height: auto; border: 2px solid white; z-index: 5; transform: scaleX(-1); border-radius: 10px; display: none; }
+        
+        /* Loader */
+        #loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 20; font-size: 1.5em; }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <video id="cam-preview" playsinline></video>
+
+    <div id="hud">Waiting...</div>
+    <div id="loader">Loading Computer Vision Models...</div>
+
+    <div id="ui-layer">
+        
+        <div id="lobby-panel" class="panel hidden">
+            <h1>Motion Arcade</h1>
+            <p>Select a game mode below (Click 3D Text or Buttons)</p>
+            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                <button onclick="gameManager.selectGame('track')">🏃 Track Run</button>
+                <button onclick="gameManager.selectGame('swim')">🏊 Ocean Swim</button>
+                <button onclick="gameManager.selectGame('heads-up')">🤔 Heads Up</button>
+            </div>
+        </div>
+
+        <div id="calibration-panel" class="panel hidden">
+            <h1 id="game-title">Instructions</h1>
+            <p id="game-instructions">...</p>
+            <hr>
+            <h3>📷 Calibration Required</h3>
+            <p>Place your device on a stand.</p>
+            <p>Step back until we can see your <b>Arms and Hands</b>.</p>
+            <div id="calib-status" style="color: red; font-weight: bold;">Body Not Detected</div>
+            <button id="start-btn" disabled onclick="gameManager.startGame()">START GAME</button>
+            <br>
+            <button style="background: #444; font-size: 0.8em;" onclick="gameManager.toLobby()">Back to Lobby</button>
+        </div>
+
+        <div id="result-panel" class="panel hidden">
+            <h1>Game Over</h1>
+            <p id="result-text"></p>
+            <button onclick="gameManager.replay()">Play Again</button>
+            <button onclick="gameManager.toLobby()">Return to Lobby</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+
+        /* =========================================
+           1. GAME STATE & MANAGER
+           ========================================= */
+        const STATES = { LOADING: 0, LOBBY: 1, INSTRUCTION: 2, GAME: 3, RESULT: 4 };
+
+        class GameManager {
+            constructor() {
+                this.state = STATES.LOADING;
+                this.currentGame = null; // 'track', 'swim', 'heads-up'
+                
+                // Game Specific Variables
+                this.score = 0;
+                this.isPlaying = false;
+                
+                // Track Variables
+                this.trackSpeed = 0;
+                this.trackDistance = 0;
+                
+                // Swim Variables
+                this.swimHeight = 0;
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+                
+                // Heads Up Variables
+                this.currentWord = "Tiger";
+                this.words = ["Tiger", "Airplane", "Spaghetti", "Zombie", "Elvis"];
+                
+                // Calibration
+                this.bodyVisible = false;
+            }
+
+            init() {
+                // Initial setup is done when models load
+                document.getElementById('loader').classList.add('hidden');
+                this.toLobby();
+            }
+
+            toLobby() {
+                this.state = STATES.LOBBY;
+                this.isPlaying = false;
+                
+                ui.showPanel('lobby-panel');
+                sceneManager.setEnvironment('lobby');
+                
+                // Reset camera
+                sceneManager.camera.position.set(0, 1.6, 5);
+            }
+
+            selectGame(type) {
+                this.currentGame = type;
+                this.state = STATES.INSTRUCTION;
+                
+                let title = "";
+                let instr = "";
+                
+                if(type === 'track') {
+                    title = "Track Runner";
+                    instr = "Pump your arms back and forth like you are running! The faster you pump, the faster you move. Don't stop or you'll slow down!";
+                    sceneManager.setEnvironment('track');
+                } else if (type === 'swim') {
+                    title = "Ocean Survival";
+                    instr = "Make swimming motions with your arms to stay afloat! If you stop, you sink. Don't let the timer run out while underwater.";
+                    sceneManager.setEnvironment('swim');
+                } else if (type === 'heads-up') {
+                    title = "Heads Up";
+                    instr = "A card is on your head! Ask your friends (or voice chat) to describe it. Say the word to win (Simulated).";
+                    sceneManager.setEnvironment('heads-up');
+                }
+
+                document.getElementById('game-title').innerText = title;
+                document.getElementById('game-instructions').innerText = instr;
+                
+                ui.showPanel('calibration-panel');
+            }
+
+            updateCalibration(poseLandmarks) {
+                if(this.state !== STATES.INSTRUCTION) return;
+
+                // Check visibility of shoulders and wrists
+                const leftShoulder = poseLandmarks[11];
+                const rightShoulder = poseLandmarks[12];
+                const leftWrist = poseLandmarks[15];
+                const rightWrist = poseLandmarks[16];
+
+                const isVisible = (point) => point && point.visibility > 0.5;
+
+                // Requirement: At least half body (shoulders) and arms visible
+                if (isVisible(leftShoulder) && isVisible(rightShoulder) && 
+                    (isVisible(leftWrist) || isVisible(rightWrist))) {
+                    
+                    this.bodyVisible = true;
+                    document.getElementById('calib-status').innerText = "✅ Body Detected! Ready.";
+                    document.getElementById('calib-status').style.color = "#00ff00";
+                    document.getElementById('start-btn').disabled = false;
+                } else {
+                    this.bodyVisible = false;
+                    document.getElementById('calib-status').innerText = "⚠️ Step back to show arms & body";
+                    document.getElementById('calib-status').style.color = "red";
+                    document.getElementById('start-btn').disabled = true;
+                }
+            }
+
+            startGame() {
+                this.state = STATES.GAME;
+                this.isPlaying = true;
+                ui.hideAllPanels();
+                document.getElementById('hud').style.display = 'block';
+                
+                // Reset Game Vars
+                this.trackSpeed = 0;
+                this.trackDistance = 0;
+                this.swimHeight = 0; // 0 is water surface
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+                
+                // Reset Camera specific to game
+                if(this.currentGame === 'track') {
+                    sceneManager.camera.position.set(0, 1.6, 5);
+                } else if(this.currentGame === 'swim') {
+                    sceneManager.camera.position.set(0, 2, 5);
+                }
+            }
+
+            endGame(msg) {
+                this.state = STATES.RESULT;
+                this.isPlaying = false;
+                document.getElementById('hud').style.display = 'none';
+                document.getElementById('result-text').innerText = msg;
+                ui.showPanel('result-panel');
+            }
+
+            replay() {
+                this.selectGame(this.currentGame);
+            }
+
+            // --- Game Loop Logic ---
+
+            update(landmarks) {
+                if(!this.isPlaying || !landmarks) return;
+
+                if(this.currentGame === 'track') {
+                    this.updateTrackGame(landmarks);
+                } else if (this.currentGame === 'swim') {
+                    this.updateSwimGame(landmarks);
+                } else if (this.currentGame === 'heads-up') {
+                    this.updateHeadsUp(landmarks);
+                }
+            }
+
+            updateTrackGame(landmarks) {
+                // Detect arm pumping (wrist velocity relative to shoulders)
+                const ly = landmarks[15].y;
+                const ry = landmarks[16].y;
+                
+                // Simple motion detection: compare to previous frame (stored in visionManager)
+                // We'll use a simplified approximation here based on frame diff
+                // Ideally we track history. For now, we simulate 'intensity' based on wrist position variance 
+                // In a real robust app, we'd calculate deltaY over time.
+                
+                // Hack: If wrists are moving significantly, add speed
+                let movement = visionManager.getWristMovement(); // Custom method below
+                
+                if (movement > 0.05) {
+                    this.trackSpeed += 0.02; // Acceleration
+                } else {
+                    this.trackSpeed *= 0.95; // Friction/Deceleration
+                }
+
+                // Cap speed
+                this.trackSpeed = Math.min(this.trackSpeed, 0.8);
+                
+                // Move "World" (Camera moves forward, or floor moves back)
+                sceneManager.moveFloor(this.trackSpeed);
+                
+                this.trackDistance += this.trackSpeed;
+                document.getElementById('hud').innerText = `Speed: ${Math.round(this.trackSpeed * 100)} | Dist: ${Math.round(this.trackDistance)}m`;
+            }
+
+            updateSwimGame(landmarks) {
+                // Detect Swimming (Arms wide or moving up/down)
+                let movement = visionManager.getWristMovement(); 
+
+                // Physics
+                const GRAVITY = 0.02;
+                const LIFT_FACTOR = 0.05;
+
+                if (movement > 0.08) {
+                    this.swimHeight += (movement * LIFT_FACTOR);
+                }
+
+                this.swimHeight -= GRAVITY;
+
+                // Constraints
+                // Water surface is Y=0. Floor is Y=-5. Sky limit is Y=3.
+                if(this.swimHeight > 3) this.swimHeight = 3;
+                if(this.swimHeight < -5) this.swimHeight = -5;
+
+                // Camera Logic
+                sceneManager.camera.position.y = Math.max(this.swimHeight + 1.5, -4); 
+
+                // Game Logic (Oxygen)
+                if (this.swimHeight < -0.2) {
+                    // Underwater
+                    this.isUnderwater = true;
+                    this.swimOxygen -= (1/30); // Approx 60fps -> 2 sec per integer? No, 1/60 per frame.
+                    sceneManager.setUnderwaterEffect(true);
+                } else {
+                    // Above water
+                    if(this.isUnderwater) {
+                        // Just surfaced
+                        this.maxOxygenTime = Math.max(3, this.maxOxygenTime - 2);
+                        this.swimOxygen = this.maxOxygenTime;
+                    }
+                    this.isUnderwater = false;
+                    sceneManager.setUnderwaterEffect(false);
+                }
+
+                document.getElementById('hud').innerText = `Depth: ${this.swimHeight.toFixed(1)}m | Oxygen: ${this.swimOxygen.toFixed(1)}s`;
+
+                if (this.swimOxygen <= 0) {
+                    this.endGame("You Drowned! Keep swimming to stay up.");
+                }
+            }
+
+            updateHeadsUp(landmarks) {
+                // Just visual tracking
+                sceneManager.updateHeadBand(landmarks);
+                document.getElementById('hud').innerText = `Card: ${this.currentWord}`;
+            }
+        }
+
+        /* =========================================
+           2. VISION MANAGER (MediaPipe)
+           ========================================= */
+        class VisionManager {
+            constructor() {
+                this.videoElement = document.getElementById('cam-preview');
+                this.canvasElement = document.createElement('canvas'); // For processing
+                this.ctx = this.canvasElement.getContext('2d');
+                
+                // User Segmentation Texture for Three.js
+                this.userCanvas = document.createElement('canvas');
+                this.userCtx = this.userCanvas.getContext('2d');
+                this.userTexture = new THREE.CanvasTexture(this.userCanvas);
+                
+                this.prevLeftWristY = 0;
+                this.prevRightWristY = 0;
+                this.motionEnergy = 0;
+            }
+
+            async init() {
+                const pose = new Pose({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }});
+
+                pose.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    enableSegmentation: true, // Key for background removal
+                    smoothSegmentation: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                pose.onResults(this.onResults.bind(this));
+
+                // Initialize Camera
+                const camera = new Camera(this.videoElement, {
+                    onFrame: async () => {
+                        await pose.send({image: this.videoElement});
+                    },
+                    width: 640,
+                    height: 480
+                });
+                
+                // Initialize Mic
+                try {
+                    await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                } catch(e) {
+                    console.warn("Mic permission denied or error", e);
+                }
+
+                camera.start();
+            }
+
+            onResults(results) {
+                if (!results.poseLandmarks) return;
+
+                // 1. Process Background Removal for 3D Texture
+                this.userCanvas.width = results.image.width;
+                this.userCanvas.height = results.image.height;
+                
+                this.userCtx.save();
+                this.userCtx.clearRect(0, 0, this.userCanvas.width, this.userCanvas.height);
+                
+                // Use segmentation mask
+                this.userCtx.drawImage(results.segmentationMask, 0, 0, this.userCanvas.width, this.userCanvas.height);
+                
+                // Composite: Keep only the person
+                this.userCtx.globalCompositeOperation = 'source-in';
+                this.userCtx.drawImage(results.image, 0, 0, this.userCanvas.width, this.userCanvas.height);
+                
+                this.userCtx.restore();
+                this.userTexture.needsUpdate = true; // Tell Three.js to update texture
+
+                // 2. Calculate Motion for Games
+                const leftWrist = results.poseLandmarks[15];
+                const rightWrist = results.poseLandmarks[16];
+                
+                if(leftWrist && rightWrist) {
+                    let dyL = Math.abs(leftWrist.y - this.prevLeftWristY);
+                    let dyR = Math.abs(rightWrist.y - this.prevRightWristY);
+                    this.motionEnergy = (dyL + dyR) * 10; // Amplify
+                    
+                    this.prevLeftWristY = leftWrist.y;
+                    this.prevRightWristY = rightWrist.y;
+                }
+
+                // 3. Send data to Game Manager
+                if(gameManager.state === STATES.INSTRUCTION) {
+                    gameManager.updateCalibration(results.poseLandmarks);
+                }
+                
+                if(gameManager.state === STATES.GAME) {
+                    gameManager.update(results.poseLandmarks);
+                }
+            }
+
+            getWristMovement() {
+                return this.motionEnergy;
+            }
+        }
+
+        /* =========================================
+           3. SCENE MANAGER (Three.js)
+           ========================================= */
+        class SceneManager {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+                this.scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                dirLight.position.set(0, 10, 10);
+                this.scene.add(dirLight);
+
+                // User Billboard (The video of the player)
+                const geometry = new THREE.PlaneGeometry(4, 3); // 4:3 aspect ratio
+                // Material uses the texture from VisionManager
+                this.userMaterial = new THREE.MeshBasicMaterial({ 
+                    map: visionManager.userTexture, 
+                    transparent: true, 
+                    side: THREE.DoubleSide
+                });
+                this.userPlane = new THREE.Mesh(geometry, this.userMaterial);
+                this.userPlane.position.set(0, 1.5, -2); // In front of camera
+                this.scene.add(this.userPlane);
+
+                // Environment Objects
+                this.floor = null;
+                this.water = null;
+                this.headBand = null;
+                
+                this.initEnvironments();
+                this.animate();
+            }
+
+            initEnvironments() {
+                // Track Floor
+                const floorGeo = new THREE.PlaneGeometry(10, 100);
+                const floorMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+                this.floor = new THREE.Mesh(floorGeo, floorMat);
+                this.floor.rotation.x = -Math.PI / 2;
+                this.floor.position.y = 0;
+                this.floor.position.z = -40; // Extend back
+                this.floor.visible = false;
+                
+                // Add stripes to floor
+                // (Simplified for code brevity: just a grey plane)
+                this.scene.add(this.floor);
+
+                // Water
+                const waterGeo = new THREE.PlaneGeometry(100, 100);
+                const waterMat = new THREE.MeshBasicMaterial({ color: 0x0077be, transparent: true, opacity: 0.8 });
+                this.water = new THREE.Mesh(waterGeo, waterMat);
+                this.water.rotation.x = -Math.PI / 2;
+                this.water.position.y = 0; // Sea level
+                this.water.visible = false;
+                this.scene.add(this.water);
+
+                // Headband for Heads-Up
+                const boxGeo = new THREE.BoxGeometry(0.8, 0.3, 0.1);
+                const boxMat = new THREE.MeshNormalMaterial(); // Rainbow color for debug
+                this.headBand = new THREE.Mesh(boxGeo, boxMat);
+                this.headBand.visible = false;
+                this.scene.add(this.headBand);
+            }
+
+            setEnvironment(type) {
+                // Reset visibility
+                this.floor.visible = false;
+                this.water.visible = false;
+                this.headBand.visible = false;
+                this.scene.background = new THREE.Color(0x000000);
+
+                if (type === 'lobby') {
+                    this.scene.background = new THREE.Color(0x220033);
+                } else if (type === 'track') {
+                    this.scene.background = new THREE.Color(0x87CEEB); // Sky
+                    this.floor.visible = true;
+                } else if (type === 'swim') {
+                    this.scene.background = new THREE.Color(0x87CEEB);
+                    this.water.visible = true;
+                } else if (type === 'heads-up') {
+                    this.scene.background = new THREE.Color(0x333333);
+                    this.headBand.visible = true;
+                }
+            }
+
+            moveFloor(speed) {
+                if(!this.floor.visible) return;
+                // Simple texture scroll simulation by moving stripes or objects
+                // For this basic geometry, we just don't see movement well without texture
+                // Let's add simple lines to the floor context if we had a texture
+            }
+
+            setUnderwaterEffect(isUnder) {
+                if(isUnder) {
+                    this.scene.fog = new THREE.Fog(0x001133, 0.1, 5);
+                    this.scene.background = new THREE.Color(0x001133);
+                } else {
+                    this.scene.fog = null;
+                    this.scene.background = new THREE.Color(0x87CEEB);
+                }
+            }
+
+            updateHeadBand(landmarks) {
+                if(!this.headBand.visible) return;
+                
+                // Head is approx landmark 0 (nose) + offset
+                const nose = landmarks[0];
+                const leftEar = landmarks[7];
+                const rightEar = landmarks[8];
+
+                if(nose && leftEar && rightEar) {
+                    // Map normalized coordinates (0..1) to 3D world space
+                    // This requires calibrating camera projection. 
+                    // Approximate mapping:
+                    
+                    // Simple projection logic for this demo:
+                    // x: (0.5 - val) * scale
+                    const x = (0.5 - nose.x) * 4; 
+                    const y = (0.5 - nose.y) * 3 + 1.8; // Offset height
+                    // z is depth. MediaPipe z is relative.
+                    // We assume user is at z = -2 approx.
+                    
+                    this.headBand.position.set(x, y + 0.3, -2);
+                }
+            }
+
+            animate() {
+                requestAnimationFrame(this.animate.bind(this));
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        class UIManager {
+            constructor() {
+                this.panels = document.querySelectorAll('.panel');
+            }
+            hideAllPanels() {
+                this.panels.forEach(p => p.classList.add('hidden'));
+            }
+            showPanel(id) {
+                this.hideAllPanels();
+                document.getElementById(id).classList.remove('hidden');
+            }
+        }
+
+        // --- Initialization ---
+        const visionManager = new VisionManager();
+        const sceneManager = new SceneManager();
+        const gameManager = new GameManager();
+        const ui = new UIManager();
+
+        // Expose to window for HTML buttons
+        window.gameManager = gameManager;
+
+        // Kickoff
+        visionManager.init().then(() => {
+            gameManager.init();
+        });
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            sceneManager.camera.aspect = window.innerWidth / window.innerHeight;
+            sceneManager.camera.updateProjectionMatrix();
+            sceneManager.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
