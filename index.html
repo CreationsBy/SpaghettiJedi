@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AR Party Game</title>
+    <style>
+        html, body { 
+            margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; 
+            overflow: hidden; background: #000; color: white; font-family: 'Arial', sans-serif; 
+            user-select: none; -webkit-user-select: none;
+        }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        /* UI Layer */
+        #ui-layer { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100dvh; 
+            z-index: 10; pointer-events: none; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+        }
+
+        .panel { 
+            background: rgba(0, 10, 20, 0.95); padding: 25px; border-radius: 20px; 
+            border: 2px solid #00d2ff; pointer-events: auto; width: 85%; max-width: 350px; 
+            text-align: center; box-shadow: 0 0 30px rgba(0, 210, 255, 0.2);
+            display: flex; flex-direction: column; gap: 12px;
+        }
+        .hidden { display: none !important; }
+
+        h1 { margin: 0; color: #00d2ff; font-size: 1.5rem; letter-spacing: 2px; }
+        h3 { margin: 5px 0; color: #aaa; }
+        p { color: #ccc; margin: 0; font-size: 0.9rem; }
+        
+        input { 
+            background: #222; border: 2px solid #444; color: white; padding: 15px; 
+            border-radius: 12px; width: 100%; box-sizing: border-box; font-size: 1.5rem; 
+            text-align: center; letter-spacing: 5px; font-weight: bold;
+        }
+        input:focus { border-color: #00d2ff; outline: none; }
+
+        button { 
+            background: linear-gradient(135deg, #00d2ff, #0077be); color: white; border: none; 
+            padding: 15px; width: 100%; font-size: 1.1rem; font-weight: bold; 
+            border-radius: 12px; cursor: pointer; transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.95); }
+        .btn-green { background: #28a745; }
+        .btn-red { background: #ff4444; margin-top: 10px; }
+        .btn-secondary { background: #444; }
+
+        /* HUD */
+        #hud { 
+            position: absolute; top: 10px; left: 10px; z-index: 5; font-weight: bold; 
+            text-shadow: 1px 1px 0 #000; pointer-events: none; padding-top: env(safe-area-inset-top);
+            font-size: 1.2rem;
+            display: none; 
+        }
+        
+        #local-preview {
+            position: absolute; bottom: 20px; right: 20px; width: 80px; height: auto;
+            border: 2px solid #00d2ff; border-radius: 10px; z-index: 5; background: black;
+            transform: scaleX(-1);
+        }
+        
+        #track-status {
+            position: absolute; bottom: 105px; right: 25px; z-index: 6; font-size: 20px;
+            display: none;
+        }
+
+        #loader { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000;
+            z-index: 100; display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+    </style>
+
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      { "imports": { "three": "https://unpkg.com/three@0.154.0/build/three.module.js" } }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <canvas id="local-preview"></canvas>
+    <div id="track-status">⚠️ Lost</div>
+
+    <div id="hud">
+        <div id="game-info">Waiting...</div>
+        <div id="sub-info" style="font-size: 0.8em; color: yellow;"></div>
+    </div>
+
+    <div id="loader">
+        <h2 style="color: #00d2ff;">Loading System...</h2>
+    </div>
+
+    <div id="ui-layer">
+        <div id="main-menu" class="panel hidden">
+            <h1>AR Party</h1>
+            <p>1. Pick a 4-Digit Code (e.g. 1234)</p>
+            <input type="tel" id="room-code-input" placeholder="0000" maxlength="4">
+            
+            <p style="margin-top:10px;">2. Tap a button to start:</p>
+            <div style="display:flex; gap:10px; width:100%;">
+                <button class="btn-green" onclick="app.host()">Create Room</button>
+                <button onclick="app.join()">Join Room</button>
+            </div>
+            <p style="font-size:0.8em; color:#888; margin-top:15px; line-height:1.4;">
+                (Camera & Mic access will be requested automatically)
+            </p>
+        </div>
+
+        <div id="lobby-panel" class="panel hidden">
+            <h1 id="lobby-code-display">Room: ????</h1>
+            <p id="player-count">Waiting for player...</p>
+            <hr style="width:100%; border:0; border-top:1px solid #444;">
+            
+            <div id="host-controls" class="hidden">
+                <h3>Select Game</h3>
+                <button onclick="gameManager.selectGame('track')">🏃 Track Run</button>
+                <button onclick="gameManager.selectGame('swim')">🏊 Ocean Swim</button>
+                <button onclick="gameManager.selectGame('heads-up')">🤔 Heads Up</button>
+            </div>
+            <div id="client-wait" class="hidden">
+                <p>Waiting for Host to pick a game...</p>
+            </div>
+            
+            <button class="btn-red" onclick="app.backToMenu()">⬅ Back to Menu</button>
+        </div>
+
+        <div id="calibration-panel" class="panel hidden">
+            <h1>Get Ready</h1>
+            <p id="calib-instr">...</p>
+            <div id="calib-status" style="background:#330000; color:#ff5555; padding:10px; border-radius:5px;">Not Detected</div>
+            <button id="start-btn" disabled onclick="gameManager.requestStartGame()">START</button>
+            <button class="btn-secondary" style="margin-top:10px" onclick="gameManager.returnToLobby()">Cancel</button>
+        </div>
+
+        <div id="result-panel" class="panel hidden">
+            <h1>Game Over</h1>
+            <p id="result-text" style="line-height: 1.5; font-size: 1.2em;"></p>
+            <button class="btn-green" onclick="gameManager.playAgain()">🔄 Play Again</button>
+            <button class="btn-secondary" onclick="gameManager.returnToLobby()">Back to Lobby</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const ID_PREFIX = "AR_GAME_ROOM_";
+
+        /* =========================================
+           1. UI MANAGER
+           ========================================= */
+        class UIManager {
+            constructor() { 
+                this.panels = document.querySelectorAll('.panel'); 
+                this.loader = document.getElementById('loader');
+                this.hud = document.getElementById('hud');
+            }
+            hideAllPanels() { this.panels.forEach(p => p.classList.add('hidden')); }
+            showPanel(id) { 
+                this.hideAllPanels(); 
+                document.getElementById(id).classList.remove('hidden'); 
+                this.hud.style.display = 'none';
+            }
+            showHUD() {
+                this.hideAllPanels();
+                this.hud.style.display = 'block';
+            }
+            showLoader(msg) {
+                this.loader.classList.remove('hidden');
+                this.loader.querySelector('h2').innerText = msg;
+            }
+            hideLoader() {
+                this.loader.classList.add('hidden');
+            }
+        }
+
+        /* =========================================
+           2. NETWORK MANAGER
+           ========================================= */
+        class NetworkManager {
+            constructor() {
+                this.peer = null;
+                this.conn = null;
+                this.isHost = false;
+                this.roomCode = "";
+                this.connected = false;
+            }
+
+            reset() {
+                if(this.peer) {
+                    this.peer.destroy();
+                    this.peer = null;
+                }
+                this.conn = null;
+                this.connected = false;
+                this.isHost = false;
+                this.roomCode = "";
+            }
+
+            hostRoom(code) {
+                this.reset();
+                this.roomCode = code;
+                this.isHost = true;
+                this.initPeer(ID_PREFIX + code);
+            }
+
+            joinRoom(code) {
+                this.reset();
+                this.roomCode = code;
+                this.isHost = false;
+                this.initPeer(null); 
+            }
+
+            initPeer(customID) {
+                ui.showLoader("Connecting...");
+                try {
+                    this.peer = new Peer(customID);
+                    const timeout = setTimeout(() => {
+                        if(!this.peer || !this.peer.open) {
+                            alert("Connection timed out. Check internet.");
+                            this.reset(); ui.hideLoader(); ui.showPanel('main-menu');
+                        }
+                    }, 15000);
+
+                    this.peer.on('open', (id) => {
+                        clearTimeout(timeout);
+                        ui.hideLoader();
+                        if(this.isHost) this.setupLobbyUI();
+                        else this.connectToHost(ID_PREFIX + this.roomCode);
+                    });
+
+                    this.peer.on('error', (err) => {
+                        clearTimeout(timeout);
+                        ui.hideLoader();
+                        if(err.type === 'unavailable-id') alert("Room " + this.roomCode + " is already taken.");
+                        else if (err.type === 'peer-unavailable') alert("Room " + this.roomCode + " not found.");
+                        else alert("Error: " + err.type);
+                        this.reset(); ui.showPanel('main-menu');
+                    });
+
+                    this.peer.on('connection', (c) => this.handleDataConnection(c));
+                    
+                    // HOST RECEIVING CALL
+                    this.peer.on('call', (call) => {
+                        const stream = visionManager.getStream();
+                        call.answer(stream); 
+                        call.on('stream', (remoteStream) => {
+                            sceneManager.addRemotePlayer(remoteStream);
+                        });
+                    });
+
+                } catch(e) {
+                    ui.hideLoader(); alert("System Error: " + e); this.reset(); ui.showPanel('main-menu');
+                }
+            }
+
+            connectToHost(hostID) {
+                ui.showLoader("Finding Room...");
+                this.conn = this.peer.connect(hostID);
+                this.conn.on('open', () => {
+                    ui.hideLoader(); this.connected = true; this.setupLobbyUI();
+                    this.conn.send({ type: 'join' });
+                });
+                
+                // CLIENT INITIATING CALL
+                const stream = visionManager.getStream();
+                if(stream) {
+                    const call = this.peer.call(hostID, stream);
+                    call.on('stream', (remoteStream) => {
+                        sceneManager.addRemotePlayer(remoteStream);
+                    });
+                }
+
+                this.conn.on('data', (data) => this.handleData(data));
+                
+                setTimeout(() => {
+                    if(!this.connected) {
+                        ui.hideLoader(); alert("Host not found.");
+                        this.reset(); ui.showPanel('main-menu');
+                    }
+                }, 5000);
+            }
+
+            setupLobbyUI() {
+                ui.showPanel('lobby-panel');
+                document.getElementById('lobby-code-display').innerText = "Room: " + this.roomCode;
+                if(this.isHost) {
+                    document.getElementById('host-controls').classList.remove('hidden');
+                    document.getElementById('client-wait').classList.add('hidden');
+                    document.getElementById('player-count').innerText = "Waiting for friend...";
+                } else {
+                    document.getElementById('host-controls').classList.add('hidden');
+                    document.getElementById('client-wait').classList.remove('hidden');
+                    document.getElementById('player-count').innerText = "Connected to Host!";
+                }
+            }
+
+            handleDataConnection(conn) {
+                this.conn = conn; this.connected = true;
+                conn.on('data', (data) => this.handleData(data));
+                conn.on('open', () => {
+                    if(this.isHost) {
+                        document.getElementById('player-count').innerText = "Friend Connected!";
+                    }
+                });
+            }
+
+            handleData(data) {
+                if(data.type === 'game_start') gameManager.startGame(data.gameType);
+                if(data.type === 'game_update') gameManager.syncState(data);
+                if(data.type === 'assign_word') gameManager.setHeadsUpWord(data.word, data.target);
+            }
+
+            send(data) {
+                if(this.conn && this.conn.open) this.conn.send(data);
+            }
+        }
+
+        /* =========================================
+           3. GAME MANAGER
+           ========================================= */
+        class GameManager {
+            constructor() {
+                this.currentGame = null;
+                this.isPlaying = false;
+                this.myWord = ""; 
+                
+                this.words = [
+                    "PIZZA", "TIGER", "ALIEN", "ROBOT", "GHOST", "BANANA", 
+                    "ELEPHANT", "NINJA", "PIRATE", "ZOMBIE", "CHICKEN", "SUPERMAN", 
+                    "BATMAN", "SPIDERMAN", "PRINCESS", "COWBOY", "ASTRONAUT", "DINOSAUR",
+                    "MONKEY", "LION", "CAT", "DOG", "FROG", "PENGUIN", 
+                    "GUITAR", "DRUMS", "SINGER", "DANCER", "TEACHER", "DOCTOR",
+                    "ICECREAM", "HAMBURGER", "TACO", "APPLE", "PUMPKIN"
+                ];
+                
+                this.wordDeck = [...this.words];
+                this.speech = null;
+                if('webkitSpeechRecognition' in window) {
+                    this.speech = new webkitSpeechRecognition();
+                    this.setupSpeech();
+                }
+                
+                this.trackDist = 0;
+                this.remoteDist = 0;
+                this.raceLength = 100;
+                this.swimHeight = 0;
+                this.remoteSwimHeight = 0;
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+            }
+            
+            getUniqueWord() {
+                if (this.wordDeck.length === 0) this.wordDeck = [...this.words];
+                const index = Math.floor(Math.random() * this.wordDeck.length);
+                return this.wordDeck.splice(index, 1)[0];
+            }
+
+            setupSpeech() {
+                this.speech.continuous = true;
+                this.speech.interimResults = true;
+                this.speech.lang = 'en-US';
+                this.speech.onresult = (e) => {
+                    const t = e.results[e.results.length-1][0].transcript.toUpperCase();
+                    if(this.currentGame === 'heads-up' && this.myWord) {
+                        if(t.includes(this.myWord)) this.handleWin();
+                    }
+                };
+            }
+
+            selectGame(type) {
+                if(networkManager.isHost) {
+                    networkManager.send({ type: 'game_start', gameType: type });
+                    this.startGame(type);
+                }
+            }
+            
+            requestStartGame() {
+                this.startActualGameplay();
+                if(networkManager.isHost) {
+                    networkManager.send({ type: 'game_update', action: 'start_play' });
+                }
+            }
+
+            startGame(type) {
+                this.currentGame = type;
+                ui.showPanel('calibration-panel');
+                sceneManager.setEnvironment(type);
+                
+                // Reset Vars
+                this.trackDist = 0;
+                this.remoteDist = 0;
+                this.swimHeight = 0;
+                this.remoteSwimHeight = 0;
+                this.swimOxygen = 10;
+                this.maxOxygenTime = 10;
+                this.isUnderwater = false;
+                document.getElementById('sub-info').innerText = "";
+                
+                if(type === 'heads-up') {
+                    document.getElementById('calib-instr').innerText = "Look at camera. Guess the word on YOUR head!";
+                    if(networkManager.isHost) {
+                        const w1 = this.getUniqueWord(); 
+                        this.setHeadsUpWord(w1, 'me');
+                        if(networkManager.connected) {
+                            const w2 = this.getUniqueWord(); 
+                            networkManager.send({ type: 'assign_word', word: w2, target: 'me' }); 
+                            setTimeout(() => {
+                                networkManager.send({ type: 'assign_word', word: w1, target: 'them' });
+                                this.setHeadsUpWord(w2, 'them'); 
+                            }, 500);
+                        }
+                    }
+                    if(this.speech) this.speech.start();
+                } else if (type === 'track') {
+                    document.getElementById('calib-instr').innerText = "PUMP ARMS to Run! First to 100m Wins.";
+                } else if (type === 'swim') {
+                    document.getElementById('calib-instr').innerText = "MOVE ARMS to Swim Up! Don't Drown.";
+                }
+                
+                if(networkManager.isHost) document.getElementById('start-btn').disabled = true; 
+                else document.getElementById('start-btn').innerText = "Waiting for Host...";
+            }
+            
+            setHeadsUpWord(word, target) {
+                if(target === 'me') {
+                    this.myWord = word;
+                    if(!networkManager.connected) {
+                         document.getElementById('sub-info').innerText = "TEST MODE: Say '" + word + "'";
+                         sceneManager.updateLabel(null);
+                    } else {
+                         sceneManager.updateLabel(null); 
+                    }
+                } else {
+                    sceneManager.updateLabel(word); 
+                }
+            }
+
+            startActualGameplay() {
+                this.isPlaying = true;
+                ui.showHUD();
+            }
+
+            playAgain() {
+                if(this.currentGame) {
+                    if(networkManager.isHost) {
+                        this.selectGame(this.currentGame);
+                    } else {
+                        ui.showPanel('lobby-panel');
+                    }
+                }
+            }
+
+            update(landmarks) {
+                if(!this.isPlaying && this.currentGame) {
+                    const status = document.getElementById('calib-status');
+                    let isReady = false;
+                    if (this.currentGame === 'heads-up') {
+                        if (landmarks[0].visibility > 0.8) isReady = true;
+                    } else {
+                        const leftS = landmarks[11].visibility > 0.5;
+                        const rightS = landmarks[12].visibility > 0.5;
+                        const leftW = landmarks[15].visibility > 0.5;
+                        const rightW = landmarks[16].visibility > 0.5;
+                        if(leftS && rightS && (leftW || rightW)) isReady = true;
+                    }
+                    if(isReady) {
+                        status.style.background = "#003300"; status.style.color = "#00ff00"; status.innerText = "✅ Ready";
+                        if(networkManager.isHost) document.getElementById('start-btn').disabled = false;
+                    } else {
+                        status.style.background = "#330000"; status.style.color = "#ff5555"; status.innerText = "⚠️ Show Body/Arms";
+                        document.getElementById('start-btn').disabled = true;
+                    }
+                    return;
+                }
+
+                if(!this.isPlaying) return;
+
+                // --- GAME LOOP ---
+                if(this.currentGame === 'track') {
+                    const energy = visionManager.getMotionEnergy();
+                    if (energy > 0.02) {
+                         let speed = energy * 0.15; 
+                         if(speed > 1.2) speed = 1.2; 
+                         this.trackDist += speed;
+                    }
+                    
+                    if(networkManager.connected) networkManager.send({ type: 'game_update', action: 'move', val: this.trackDist });
+                    
+                    sceneManager.updateTrackGame(this.trackDist, this.remoteDist);
+                    document.getElementById('game-info').innerText = `Dist: ${Math.floor(this.trackDist)}m / ${this.raceLength}m`;
+                    
+                    if(this.trackDist >= this.raceLength) this.handleWin("🎉 You Crossed the Finish Line!");
+                }
+                else if (this.currentGame === 'swim') {
+                    const energy = visionManager.getMotionEnergy();
+                    if(energy > 0.08) this.swimHeight += 0.05;
+                    this.swimHeight -= 0.02; 
+                    
+                    if(this.swimHeight > 0.5) this.swimHeight = 0.5;
+                    if(this.swimHeight < -5) this.swimHeight = -5;
+                    
+                    if(networkManager.connected) networkManager.send({ type: 'game_update', action: 'swim_move', val: this.swimHeight });
+
+                    sceneManager.updateSwimVisuals(this.swimHeight, this.remoteSwimHeight);
+                    
+                    if (this.swimHeight < -0.2) {
+                        this.isUnderwater = true;
+                        this.swimOxygen -= (1/30);
+                        sceneManager.setUnderwaterEffect(true);
+                    } else {
+                        if(this.isUnderwater) {
+                            this.maxOxygenTime = Math.max(3, this.maxOxygenTime - 2);
+                            this.swimOxygen = this.maxOxygenTime;
+                        }
+                        this.isUnderwater = false;
+                        sceneManager.setUnderwaterEffect(false);
+                    }
+                    
+                    document.getElementById('game-info').innerText = `Depth: ${this.swimHeight.toFixed(1)}m`;
+                    document.getElementById('sub-info').innerText = `OXYGEN: ${this.swimOxygen.toFixed(1)}s`;
+                    
+                    if (this.swimOxygen <= 0) this.handleLoss("🌊 You Drowned!");
+                }
+                else if (this.currentGame === 'heads-up') {
+                    sceneManager.updateHeadTracking(landmarks);
+                    document.getElementById('game-info').innerText = `GUESS THE WORD!`;
+                }
+            }
+
+            syncState(data) {
+                if(data.action === 'move') this.remoteDist = data.val;
+                if(data.action === 'swim_move') this.remoteSwimHeight = data.val; 
+                if(data.action === 'start_play') this.startActualGameplay();
+                if(data.action === 'win') this.endGame(data.msg); 
+                if(data.action === 'opponent_died') this.endGame("🎉 You Survived!\nOpponent Drowned.");
+            }
+            
+            handleWin(msg) {
+                const txt = msg || ("🎉 Awesome Job!\nThe word was: " + this.myWord);
+                if(networkManager.connected) {
+                    let opponentMsg = "Good Try!";
+                    if(this.currentGame === 'heads-up') opponentMsg = "Good Try!\nThe word was: " + this.myWord;
+                    else if(this.currentGame === 'track') opponentMsg = "Too Slow! Opponent Finished.";
+                    networkManager.send({ type: 'game_update', action: 'win', msg: opponentMsg });
+                }
+                this.endGame(txt);
+            }
+            
+            handleLoss(msg) {
+                if(networkManager.connected) {
+                    networkManager.send({ type: 'game_update', action: 'opponent_died' });
+                }
+                this.endGame(msg);
+            }
+
+            endGame(msg) {
+                this.isPlaying = false;
+                if(this.speech) this.speech.stop();
+                document.getElementById('result-text').innerText = msg;
+                ui.showPanel('result-panel');
+            }
+            
+            returnToLobby() {
+                ui.showPanel('lobby-panel');
+                sceneManager.setEnvironment('lobby');
+                this.isPlaying = false;
+                sceneManager.resetCamera();
+            }
+        }
+
+        /* =========================================
+           4. VISION MANAGER
+           ========================================= */
+        class VisionManager {
+            constructor() {
+                this.canvas = document.getElementById('local-preview');
+                this.ctx = this.canvas.getContext('2d');
+                this.userCanvas = document.createElement('canvas'); 
+                this.userCtx = this.userCanvas.getContext('2d');
+                this.video = null;
+                this.pose = null;
+                this.prevY = 0; this.energy = 0;
+            }
+            
+            async preload() {
+                this.pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+                this.pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, enableSegmentation: true, minDetectionConfidence: 0.5 });
+                this.pose.onResults(this.process.bind(this));
+                await this.pose.initialize();
+            }
+
+            async startCamera() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'user', width: {ideal: 640}, height: {ideal: 480} }, 
+                        audio: true 
+                    });
+                    this.video = document.createElement('video');
+                    this.video.srcObject = stream;
+                    this.video.playsInline = true;
+                    this.video.autoplay = true;
+                    this.video.muted = true;
+                    await this.video.play();
+                    this.loop();
+                    return true;
+                } catch(e) {
+                    alert("Camera Permission Denied: " + e.message);
+                    return false;
+                }
+            }
+            
+            async loop() {
+                if(this.video && this.video.readyState >= 2) await this.pose.send({image: this.video});
+                requestAnimationFrame(this.loop.bind(this));
+            }
+            
+            process(results) {
+                const trackStatus = document.getElementById('track-status');
+                if(!results.poseLandmarks) { trackStatus.style.display = 'block'; return; } 
+                else { trackStatus.style.display = 'none'; }
+
+                this.canvas.width = this.userCanvas.width = results.image.width;
+                this.canvas.height = this.userCanvas.height = results.image.height;
+                
+                this.userCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.userCtx.drawImage(results.segmentationMask, 0, 0, this.canvas.width, this.canvas.height);
+                this.userCtx.globalCompositeOperation = 'source-in';
+                this.userCtx.drawImage(results.image, 0, 0, this.canvas.width, this.canvas.height);
+                
+                this.ctx.drawImage(this.userCanvas, 0, 0);
+                sceneManager.updateLocalTexture(this.userCanvas);
+
+                if(results.poseLandmarks) {
+                    const wy = results.poseLandmarks[15].y;
+                    this.energy = Math.abs(wy - this.prevY) * 10;
+                    this.prevY = wy;
+                    gameManager.update(results.poseLandmarks);
+                }
+            }
+
+            getStream() { if(this.canvas.width > 0) return this.canvas.captureStream(30); return null; }
+            getMotionEnergy() { return this.energy; }
+        }
+
+        /* =========================================
+   5. SCENE MANAGER (HEADS-UP HEIGHT FIX)
+   ========================================= */
+class SceneManager {
+    constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
+        this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(this.renderer.domElement);
+        
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        
+        // 1. Shared Geometry
+        this.avatarGeo = new THREE.PlaneGeometry(1, 1); 
+        
+        // 2. Local Mesh (You)
+        const phMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+        this.localMesh = new THREE.Mesh(this.avatarGeo, phMat);
+        this.scene.add(this.localMesh);
+
+        this.remoteMesh = null; 
+
+        // 3. Heads-Up Label
+        this.headLabel = this.createLabel("Waiting...");
+        this.headLabel.visible = false;
+        this.scene.add(this.headLabel);
+        
+        // 4. Environment
+        this.floor = this.createFloor();
+        this.scene.add(this.floor);
+        this.finishLine = this.createFinishLine();
+        this.scene.add(this.finishLine);
+        this.water = this.createWater();
+        this.scene.add(this.water);
+        
+        // 5. Initial Layout
+        this.xOffset = 1.0; 
+        this.camera.position.set(0, 1, 0);
+        
+        window.addEventListener('resize', () => this.updateLayout());
+        this.updateLayout();
+        this.animate();
+    }
+    
+    updateLayout() {
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+
+        const dist = 3; 
+        const vFOV = THREE.MathUtils.degToRad(this.camera.fov);
+        const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+        const visibleWidth = visibleHeight * this.camera.aspect;
+
+        this.xOffset = visibleWidth * 0.25;
+        const maxAvatarWidth = (visibleWidth / 2) * 0.9; 
+
+        this.localMesh.position.set(-this.xOffset, 0, -3);
+        if(this.localMesh.scale.x > maxAvatarWidth) {
+            const ratio = this.localMesh.scale.y / this.localMesh.scale.x;
+            this.localMesh.scale.set(maxAvatarWidth, maxAvatarWidth * ratio, 1);
+        }
+
+        if(this.remoteMesh) {
+            this.remoteMesh.position.set(this.xOffset, 0, -3);
+            if(this.remoteMesh.scale.x > maxAvatarWidth) {
+                const ratio = this.remoteMesh.scale.y / this.remoteMesh.scale.x;
+                this.remoteMesh.scale.set(maxAvatarWidth, maxAvatarWidth * ratio, 1);
+            }
+        }
+    }
+
+    // FIX: Changed to 2:1 Aspect Ratio (Taller)
+    createLabel(text) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512; 
+        canvas.height = 256; // Taller canvas (was 128)
+        
+        const geometry = new THREE.PlaneGeometry(1, 0.5); // Taller geometry (was 0.25)
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        
+        const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
+        mesh.renderOrder = 999; 
+        return mesh;
+    }
+
+    updateLabel(text) {
+        if(!text) { this.headLabel.visible = false; return; }
+        
+        const canvas = this.headLabel.material.map.image;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        
+        ctx.clearRect(0, 0, w, h);
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; 
+        ctx.fillRect(10, 10, w-20, h-20);
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#00d2ff';
+        ctx.strokeRect(10, 10, w-20, h-20);
+        
+        ctx.fillStyle = 'black'; 
+        ctx.textAlign = 'center'; 
+        ctx.textBaseline = 'middle';
+        
+        // FIX: Larger font start size since we have more height
+        let fontSize = 120;
+        ctx.font = `bold ${fontSize}px Arial`;
+        while (ctx.measureText(text).width > (w - 60) && fontSize > 20) {
+            fontSize -= 5;
+            ctx.font = `bold ${fontSize}px Arial`;
+        }
+        
+        ctx.fillText(text, w/2, h/2);
+        
+        this.headLabel.material.map.needsUpdate = true;
+        this.headLabel.visible = true;
+    }
+
+    updateHeadTracking() {
+        if(this.remoteMesh && this.headLabel.visible) {
+            this.headLabel.position.x = this.remoteMesh.position.x;
+            this.headLabel.position.z = this.remoteMesh.position.z; 
+            
+            const avatarTop = this.remoteMesh.position.y + (this.remoteMesh.scale.y / 2);
+            this.headLabel.position.y = avatarTop + 0.3; 
+
+            // FIX: Scale height to 0.5 of width (2:1 Ratio)
+            const width = this.remoteMesh.scale.x;
+            this.headLabel.scale.set(width, width * 0.5, 1); 
+        }
+    }
+
+    addRemotePlayer(stream) {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true; video.muted = true; video.playsInline = true; video.play();
+
+        const tex = new THREE.VideoTexture(video);
+        tex.colorSpace = THREE.SRGBColorSpace; 
+
+        if(this.remoteMesh) this.scene.remove(this.remoteMesh);
+        
+        this.remoteMesh = new THREE.Mesh(this.avatarGeo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+        this.scene.add(this.remoteMesh);
+        
+        video.addEventListener('loadedmetadata', () => {
+            if(video.videoWidth && video.videoHeight) {
+                const aspect = video.videoWidth / video.videoHeight;
+                const baseH = 1.5; 
+                this.remoteMesh.scale.set(baseH * aspect, baseH, 1);
+                this.updateLayout();
+            }
+        });
+    }
+
+    updateLocalTexture(canvas) { 
+        if(!this.localMesh.material.map && canvas.width > 0) {
+             this.localMesh.material.map = new THREE.CanvasTexture(canvas);
+             this.localMesh.material.map.colorSpace = THREE.SRGBColorSpace;
+             this.localMesh.material.needsUpdate = true;
+             
+             const aspect = canvas.width / canvas.height;
+             const baseH = 1.5;
+             this.localMesh.scale.set(baseH * aspect, baseH, 1);
+             this.updateLayout();
+        }
+        if(this.localMesh.material.map) this.localMesh.material.map.needsUpdate = true;
+    }
+
+    updateTrackGame(myDist, theirDist) {
+         this.finishLine.position.z = -100 + myDist; 
+         const relativeZ = (theirDist - myDist);
+         if(this.remoteMesh) {
+            this.remoteMesh.position.z = -3 - (relativeZ * 0.1); 
+            this.remoteMesh.position.x = this.xOffset; 
+         }
+    }
+    
+    updateSwimVisuals(myHeight, theirHeight) {
+        this.localMesh.position.y = myHeight;
+        this.camera.position.y = myHeight + 1.0; 
+        if(this.remoteMesh && theirHeight !== undefined) {
+            this.remoteMesh.position.y = theirHeight;
+        }
+    }
+
+    setUnderwaterEffect(isUnder) {
+        if(isUnder) { 
+            this.scene.fog = new THREE.Fog(0x001133, 0.1, 5); 
+            this.scene.background = new THREE.Color(0x001133); 
+        } else { 
+            this.scene.fog = null; 
+            this.scene.background = new THREE.Color(0x006994); 
+        }
+    }
+    
+    resetCamera() {
+        this.camera.position.set(0, 1, 0);
+        this.updateLayout(); 
+    }
+
+    setEnvironment(type) {
+        this.scene.fog = null;
+        this.scene.background = new THREE.Color(type==='lobby'?0x110022 : type==='track'?0x87CEEB : type==='swim'?0x006994 : 0x333333);
+        this.floor.visible = (type === 'track');
+        this.finishLine.visible = (type === 'track');
+        this.water.visible = (type === 'swim');
+        this.headLabel.visible = (type === 'heads-up' && this.remoteMesh !== null);
+        this.resetCamera();
+    }
+
+    createFinishLine() {
+        const geo = new THREE.PlaneGeometry(10, 2);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(0, 1.5, -100); mesh.visible = false;
+        return mesh;
+    }
+
+    createWater() {
+        const geo = new THREE.PlaneGeometry(20, 100);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x006994, transparent:true, opacity:0.8 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI/2; mesh.position.y = -1; mesh.visible = false;
+        return mesh;
+    }
+    
+    createFloor() {
+        const geo = new THREE.PlaneGeometry(20, 100);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI/2; mesh.position.y = -1; mesh.position.z = -40;
+        return mesh;
+    }
+
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
+        this.renderer.render(this.scene, this.camera);
+    }
+}
+
+        /* =========================================
+           6. MAIN APP LOGIC
+           ========================================= */
+        class App {
+            constructor() {}
+            async host() {
+                const code = document.getElementById('room-code-input').value.trim();
+                if(code.length !== 4) return alert("Please enter a 4-digit code (e.g. 1234)");
+                const success = await visionManager.startCamera();
+                if(success) networkManager.hostRoom(code);
+            }
+            async join() {
+                const code = document.getElementById('room-code-input').value.trim();
+                if(code.length !== 4) return alert("Please enter a 4-digit code.");
+                const success = await visionManager.startCamera();
+                if(success) networkManager.joinRoom(code);
+            }
+            backToMenu() {
+                networkManager.reset();
+                ui.showPanel('main-menu');
+            }
+        }
+
+        const ui = new UIManager();
+        const visionManager = new VisionManager();
+        const sceneManager = new SceneManager();
+        const gameManager = new GameManager();
+        const networkManager = new NetworkManager();
+        const app = new App();
+
+        window.app = app;
+        window.gameManager = gameManager;
+
+        visionManager.preload().then(() => {
+            ui.hideLoader();
+            ui.showPanel('main-menu');
+        }).catch(e => {
+            console.error(e);
+            ui.hideLoader();
+            ui.showPanel('main-menu');
+        });
+
+    </script>
+</body>
+</html>
